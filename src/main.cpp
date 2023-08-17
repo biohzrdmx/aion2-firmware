@@ -43,12 +43,6 @@
 #define STATE_CLIENT  4
 #define STATE_ERROR  99
 
-#define MODE_CLOCK 0
-#define MODE_TEMP  1
-#define MODE_PRES  2
-#define MODE_ALT   3
-#define MODE_HUM   4
-
 #define PIN_BTN_RESET D4
 
 #define FIRMWARE_VERSION  F("1.0")
@@ -70,13 +64,11 @@ struct Config {
 Config config;
 
 int state = STATE_IDLE;
-int mode = MODE_CLOCK;
 bool is_reset = false;
 bool update = true;
-bool sleep = false;
+bool is_clock = true;
 
 float temp, pressure, altitude, humidity, heat_index;
-float old_temp, old_pressure, old_altitude, old_humidity, old_heat_index;
 
 String wifi_ssid;
 String wifi_password;
@@ -89,7 +81,7 @@ String device_version;
 String device_serial;
 String device_mac;
 
-Timer timer_read, timer_sleep;
+Timer timer_read, timer_clock;
 EasyButton button_reset(PIN_BTN_RESET);
 ESP8266WebServer server(80);
 WiFiClient client;
@@ -285,7 +277,7 @@ void setup_client() {
   String ip = WiFi.localIP().toString();
   //
   HTTPClient http;
-  http.begin(F("http://cloud.vecode.net/api/devices/register"));
+  http.begin(client, F("http://cloud.vecode.net/api/devices/register"));
   http.addHeader(F("Content-Type"), F("application/x-www-form-urlencoded"));
   String postData = "uid=" + cloud_uid + "&serial=" + device_serial + "&name=" + device_name + "&type=" + device_type + "&address=" + ip;
   int httpCode = http.POST(postData);
@@ -318,7 +310,7 @@ void setup_client() {
     //
     update_sensor_data();
     timer_read.init(config.updateInterval);
-    timer_sleep.init(180000);
+    timer_clock.init(config.updateInterval / 10);
     //
     lcd.fillScreen(TFT_BLACK);
   } else {
@@ -373,7 +365,6 @@ void callback_xhr_connect() {
     {
       String response;
       DynamicJsonDocument json(2048);
-      JsonObject data = json.createNestedObject("data");
       //
       lcd.fillScreen(TFT_BLACK);
       lcd.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -493,7 +484,7 @@ void callback_xhr_rpc() {
           file.close();
         } else if (cmd == "MODE") {
           JsonObject data = json.createNestedObject("data");
-          data["mode"] = mode;
+          data["mode"] = 0;
           json["result"] = F("success");
         } else if (cmd == "VALUES") {
           JsonObject data = json.createNestedObject("data");
@@ -526,14 +517,17 @@ void callback_xhr_rpc() {
           //
           timeClient.setTimeOffset(config.timeOffset);
           timer_read.init(config.updateInterval);
+          timer_clock.init(config.updateInterval / 10);
           //
+          is_clock = true;
           update = true;
           //
           save_configuration("/config.json", config);
           json["result"] = F("success");
         } else if (cmd == "MODE") {
           String new_mode = server.hasArg("mode") ? server.arg("mode") : "";
-          mode = new_mode.toInt();
+          timer_clock.restart();
+          is_clock = true;
           update = true;
           json["result"] = F("success");
         }
@@ -568,13 +562,13 @@ void read_eeprom() {
 
 void write_eeprom(String ssid, String password, String cloud_uid) {
   Serial.println(F("Writing eeprom..."));
-  for (int i = 0; i < ssid.length(); ++i) {
+  for (uint i = 0; i < ssid.length(); ++i) {
     EEPROM.write(i, ssid[i]);
   }
-  for (int i = 0; i < password.length(); ++i) {
+  for (uint i = 0; i < password.length(); ++i) {
     EEPROM.write(32 + i, password[i]);
   }
-  for (int i = 0; i < cloud_uid.length(); ++i) {
+  for (uint i = 0; i < cloud_uid.length(); ++i) {
     EEPROM.write(96 + i, cloud_uid[i]);
   }
   EEPROM.commit();
@@ -619,19 +613,12 @@ void update_sensor_data() {
   sensors_event_t humidity_evt, temp_evt;
   aht.getEvent(&humidity_evt, &temp_evt);
   //
-  old_pressure = pressure;
-  old_altitude = altitude;
-  old_temp = temp;
-  old_humidity = humidity;
-  old_heat_index = heat_index;
-  //
   pressure = bmp.readPressure() / 100.0F;
   altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
   temp = temp_evt.temperature;
   humidity = humidity_evt.relative_humidity;
   heat_index = compute_heat_index(temp, humidity, false);
   //
-  update = true;
   Serial.println("Readings:");
   Serial.println(temp);
   Serial.println(heat_index);
@@ -695,12 +682,11 @@ float compute_heat_index(float temperature, float percentHumidity, bool isFahren
 }
 
 void loop() {
-  int old_hours = 0, old_minutes = 0;
   char buffer[9] = "";
   timeClient.update();
   button_reset.read();
   timer_read.update();
-  timer_sleep.update();
+  timer_clock.update();
   switch (state) {
     case STATE_SERVER:
       server.handleClient();
@@ -708,85 +694,75 @@ void loop() {
     case STATE_CLIENT:
       if (update) {
 
-        float old_value = ((old_temp + 50.0f) / 100.0f) * 360;
-        float value = ((temp + 50.0f) / 100.0f) * 360;
-        uint32_t color;
+        lcd.fillScreen(TFT_BLACK);
 
-        if (temp < 10) {
-          color = lcd.color565(72, 209, 204);
-        } else if (temp < 25) {
-          color = lcd.color565(34, 139, 34);
-        } else if (temp < 30) {
-          color = lcd.color565(218, 165, 32);
+        if (is_clock) {
+
+            lcd.loadFont(AA_FONT_LARGE);
+
+            sprintf(buffer, "%02d:%02d", timeClient.getHours(), timeClient.getMinutes());
+            lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+            lcd.drawCentreString(buffer, 120, 102, 2);
+
+            lcd.unloadFont();
+
         } else {
-          color = lcd.color565(178, 34, 34);
+
+          float value = ((temp + 50.0f) / 100.0f) * 360;
+          uint32_t color;
+
+          if (temp < 10) {
+            color = lcd.color565(72, 209, 204);
+          } else if (temp < 25) {
+            color = lcd.color565(34, 139, 34);
+          } else if (temp < 30) {
+            color = lcd.color565(218, 165, 32);
+          } else {
+            color = lcd.color565(178, 34, 34);
+          }
+
+          //
+
+          lcd.loadFont(AA_FONT_LARGE);
+
+          sprintf(buffer, "%.0fº C", temp);
+          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+          lcd.drawCentreString(buffer, 120, 60, 6);
+
+          lcd.unloadFont();
+
+          //
+
+          lcd.loadFont(AA_FONT_SMALL);
+
+          sprintf(buffer, "Feels like %.0fº C", heat_index);
+          lcd.setTextColor(color, TFT_BLACK, true);
+          lcd.drawCentreString(buffer, 120, 110, 2);
+
+          sprintf(buffer, "%.0f hPa", pressure);
+          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+          lcd.drawString(buffer, 40, 140, 2);
+
+          sprintf(buffer, "Hum. %.0f%%", humidity);
+          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+          lcd.drawRightString(buffer, 200, 140, 2);
+
+          lcd.unloadFont();
+
+          //
+
+          lcd.loadFont(AA_FONT_MEDIUM);
+
+          sprintf(buffer, "%02d:%02d", timeClient.getHours(), timeClient.getMinutes());
+          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+          lcd.drawCentreString(buffer, 120, 170, 4);
+
+          lcd.unloadFont();
+
+          //
+
+          lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
         }
-
-        //
-
-        lcd.loadFont(AA_FONT_LARGE);
-
-        sprintf(buffer, "%.0fº C", old_temp);
-        lcd.setTextColor(TFT_BLACK, TFT_BLACK);
-        lcd.drawCentreString(buffer, 120, 60, 6);
-
-        sprintf(buffer, "%.0fº C", temp);
-        lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-        lcd.drawCentreString(buffer, 120, 60, 6);
-
-        lcd.unloadFont();
-
-        //
-
-        lcd.loadFont(AA_FONT_SMALL);
-
-        sprintf(buffer, "Feels like %.0fº C", old_heat_index);
-        lcd.setTextColor(TFT_BLACK, TFT_BLACK);
-        lcd.drawCentreString(buffer, 120, 110, 2);
-
-        sprintf(buffer, "Feels like %.0fº C", heat_index);
-        lcd.setTextColor(color, TFT_BLACK, true);
-        lcd.drawCentreString(buffer, 120, 110, 2);
-
-        sprintf(buffer, "%.0f hPa", old_pressure);
-        lcd.setTextColor(TFT_BLACK, TFT_BLACK);
-        lcd.drawString(buffer, 40, 140, 2);
-
-        sprintf(buffer, "%.0f hPa", pressure);
-        lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-        lcd.drawString(buffer, 40, 140, 2);
-
-        sprintf(buffer, "Hum. %.0f%%", old_humidity);
-        lcd.setTextColor(TFT_BLACK, TFT_BLACK);
-        lcd.drawRightString(buffer, 200, 140, 2);
-
-        sprintf(buffer, "Hum. %.0f%%", humidity);
-        lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-        lcd.drawRightString(buffer, 200, 140, 2);
-
-        lcd.unloadFont();
-
-        //
-
-        lcd.loadFont(AA_FONT_MEDIUM);
-
-        sprintf(buffer, "%02d:%02d", old_hours, old_minutes);
-        lcd.setTextColor(TFT_BLACK, TFT_BLACK);
-        lcd.drawCentreString(buffer, 120, 170, 4);
-
-        sprintf(buffer, "%02d:%02d", timeClient.getHours(), timeClient.getMinutes());
-        lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-        lcd.drawCentreString(buffer, 120, 170, 4);
-
-        old_hours = timeClient.getHours();
-        old_minutes = timeClient.getMinutes();
-
-        lcd.unloadFont();
-
-        //
-
-        lcd.drawSmoothArc(120, 120, 110, 105, 0, old_value, TFT_BLACK, TFT_BLACK, true);
-        lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
 
         update = false;
       }
@@ -800,12 +776,15 @@ void loop() {
       //
     break;
   }
-  if ( timer_sleep.hasFinished() ) {
-    sleep = true;
+  if ( is_clock && timer_clock.hasFinished() ) {
+    is_clock = false;
+    update = true;
   }
   if ( timer_read.hasFinished() ) {
     update_sensor_data();
     timer_read.restart();
+    timer_clock.restart();
+    is_clock = true;
     update = true;
   }
 }
