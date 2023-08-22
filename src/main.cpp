@@ -43,6 +43,11 @@
 #define STATE_CLIENT  4
 #define STATE_ERROR  99
 
+#define MODE_CLOCK    0
+#define MODE_TEMP     1
+#define MODE_HUMIDITY 2
+#define MODE_PRESSURE 3
+
 #define PIN_BTN_RESET D4
 
 #define FIRMWARE_VERSION  F("1.0")
@@ -64,9 +69,9 @@ struct Config {
 Config config;
 
 int state = STATE_IDLE;
+int mode = MODE_CLOCK;
 bool is_reset = false;
 bool update = true;
-bool is_clock = true;
 
 float temp, pressure, altitude, humidity, heat_index;
 
@@ -81,7 +86,7 @@ String device_version;
 String device_serial;
 String device_mac;
 
-Timer timer_read, timer_clock;
+Timer timer_read, timer_mode;
 EasyButton button_reset(PIN_BTN_RESET);
 ESP8266WebServer server(80);
 WiFiClient client;
@@ -310,7 +315,8 @@ void setup_client() {
     //
     update_sensor_data();
     timer_read.init(config.updateInterval);
-    timer_clock.init(config.updateInterval / 10);
+    timer_mode.init(30000);
+    update = true;
     //
     lcd.fillScreen(TFT_BLACK);
   } else {
@@ -517,18 +523,14 @@ void callback_xhr_rpc() {
           //
           timeClient.setTimeOffset(config.timeOffset);
           timer_read.init(config.updateInterval);
-          timer_clock.init(config.updateInterval / 10);
-          //
-          is_clock = true;
-          update = true;
           //
           save_configuration("/config.json", config);
           json["result"] = F("success");
         } else if (cmd == "MODE") {
           String new_mode = server.hasArg("mode") ? server.arg("mode") : "";
-          timer_clock.restart();
-          is_clock = true;
-          update = true;
+          //mode = new_mode;
+          //timer_mode.restart();
+          //update = true;
           json["result"] = F("success");
         }
         serializeJson(json, response);
@@ -629,15 +631,15 @@ void update_sensor_data() {
   if ( pubsub.connected() ) {
     String topic;
     topic = device_serial + "/temperature";
-    pubsub.publish(topic.c_str(), ((String)temp).c_str());
+    pubsub.publish(topic.c_str(), ((String)temp).c_str(), true);
     topic = device_serial + "/heat_index";
-    pubsub.publish(topic.c_str(), ((String)heat_index).c_str());
+    pubsub.publish(topic.c_str(), ((String)heat_index).c_str(), true);
     topic = device_serial + "/pressure";
-    pubsub.publish(topic.c_str(), ((String)pressure).c_str());
+    pubsub.publish(topic.c_str(), ((String)pressure).c_str(), true);
     topic = device_serial + "/altitude";
-    pubsub.publish(topic.c_str(), ((String)altitude).c_str());
+    pubsub.publish(topic.c_str(), ((String)altitude).c_str(), true);
     topic = device_serial + "/humidity";
-    pubsub.publish(topic.c_str(), ((String)humidity).c_str());
+    pubsub.publish(topic.c_str(), ((String)humidity).c_str(), true);
   } else {
     Serial.println("Not connected to broker");
   }
@@ -686,7 +688,7 @@ void loop() {
   timeClient.update();
   button_reset.read();
   timer_read.update();
-  timer_clock.update();
+  timer_mode.update();
   switch (state) {
     case STATE_SERVER:
       server.handleClient();
@@ -696,7 +698,15 @@ void loop() {
 
         lcd.fillScreen(TFT_BLACK);
 
-        if (is_clock) {
+        float value = 0.0f;
+        uint32_t color;
+
+        switch (mode) {
+          case MODE_CLOCK:
+
+            value = (timeClient.getHours() / 24.0f) * 360;
+
+            //
 
             lcd.loadFont(AA_FONT_LARGE);
 
@@ -706,62 +716,185 @@ void loop() {
 
             lcd.unloadFont();
 
-        } else {
+            //
 
-          float value = ((temp + 50.0f) / 100.0f) * 360;
-          uint32_t color;
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
 
-          if (temp < 10) {
-            color = lcd.color565(72, 209, 204);
-          } else if (temp < 25) {
-            color = lcd.color565(34, 139, 34);
-          } else if (temp < 30) {
-            color = lcd.color565(218, 165, 32);
-          } else {
-            color = lcd.color565(178, 34, 34);
-          }
+            // lcd.loadFont(AA_FONT_LARGE);
 
-          //
+            // sprintf(buffer, "%.1fº C", temp);
+            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            // lcd.drawCentreString(buffer, 120, 60, 6);
 
-          lcd.loadFont(AA_FONT_LARGE);
+            // lcd.unloadFont();
 
-          sprintf(buffer, "%.0fº C", temp);
-          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-          lcd.drawCentreString(buffer, 120, 60, 6);
+            // //
 
-          lcd.unloadFont();
+            // lcd.loadFont(AA_FONT_SMALL);
 
-          //
+            // sprintf(buffer, "Feels like %.1fº C", heat_index);
+            // lcd.setTextColor(color, TFT_BLACK, true);
+            // lcd.drawCentreString(buffer, 120, 110, 2);
 
-          lcd.loadFont(AA_FONT_SMALL);
+            // sprintf(buffer, "%.0f hPa", pressure);
+            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            // lcd.drawString(buffer, 40, 140, 2);
 
-          sprintf(buffer, "Feels like %.0fº C", heat_index);
-          lcd.setTextColor(color, TFT_BLACK, true);
-          lcd.drawCentreString(buffer, 120, 110, 2);
+            // sprintf(buffer, "Hum. %.0f%%", humidity);
+            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            // lcd.drawRightString(buffer, 200, 140, 2);
 
-          sprintf(buffer, "%.0f hPa", pressure);
-          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-          lcd.drawString(buffer, 40, 140, 2);
+            // lcd.unloadFont();
 
-          sprintf(buffer, "Hum. %.0f%%", humidity);
-          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-          lcd.drawRightString(buffer, 200, 140, 2);
+            // //
 
-          lcd.unloadFont();
+            // lcd.loadFont(AA_FONT_MEDIUM);
 
-          //
+            // sprintf(buffer, "%02d:%02d", timeClient.getHours(), timeClient.getMinutes());
+            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            // lcd.drawCentreString(buffer, 120, 170, 4);
 
-          lcd.loadFont(AA_FONT_MEDIUM);
+            // lcd.unloadFont();
 
-          sprintf(buffer, "%02d:%02d", timeClient.getHours(), timeClient.getMinutes());
-          lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-          lcd.drawCentreString(buffer, 120, 170, 4);
+            // //
 
-          lcd.unloadFont();
+            // value = ((temp + 50.0f) / 100.0f) * 360;
 
-          //
+            // if (temp < 10) {
+            //   color = lcd.color565(72, 209, 204);
+            // } else if (temp < 25) {
+            //   color = lcd.color565(34, 139, 34);
+            // } else if (temp < 30) {
+            //   color = lcd.color565(218, 165, 32);
+            // } else {
+            //   color = lcd.color565(178, 34, 34);
+            // }
 
-          lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+            // lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+
+          break;
+          case MODE_TEMP:
+
+            value = ((temp + 50.0f) / 100.0f) * 360;
+
+            if (temp < 10) {
+              color = lcd.color565(72, 209, 204);
+            } else if (temp < 25) {
+              color = lcd.color565(34, 139, 34);
+            } else if (temp < 30) {
+              color = lcd.color565(218, 165, 32);
+            } else {
+              color = lcd.color565(178, 34, 34);
+            }
+
+            //
+
+            lcd.loadFont(AA_FONT_LARGE);
+
+            sprintf(buffer, "%.1fº C", temp);
+            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.drawCentreString(buffer, 120, 99, 6);
+
+            lcd.unloadFont();
+
+            //
+
+            lcd.loadFont(AA_FONT_SMALL);
+
+            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.drawCentreString(F("Temperature"), 120, 73, 2);
+
+            sprintf(buffer, "Feels like %.0fº C", heat_index);
+            lcd.setTextColor(color, TFT_BLACK, true);
+            lcd.drawCentreString(buffer, 120, 150, 2);
+
+            lcd.unloadFont();
+
+            //
+
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+
+          break;
+          case MODE_HUMIDITY:
+
+            value = (humidity / 100.0f) * 360;
+
+            // Td = T - ((100 - RH)/5.)
+
+            if (humidity < 30) {
+              color = lcd.color565(255, 87, 34);
+            } else if (humidity < 60) {
+              color = lcd.color565(139, 195, 74);
+            } else {
+              color = lcd.color565(38, 198, 218);
+            }
+
+            //
+
+            lcd.loadFont(AA_FONT_LARGE);
+
+            sprintf(buffer, "%.0f%%", humidity);
+            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.drawCentreString(buffer, 120, 99, 6);
+
+            lcd.unloadFont();
+
+            //
+
+            lcd.loadFont(AA_FONT_SMALL);
+
+            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.drawCentreString(F("Humidty"), 120, 73, 2);
+
+            lcd.setTextColor(color, TFT_BLACK, true);
+            if (humidity < 30) {
+              lcd.drawCentreString("Dry", 120, 150, 2);
+            } else if (humidity < 60) {
+              lcd.drawCentreString("Comfortable", 120, 150, 2);
+            } else {
+              lcd.drawCentreString("Humid", 120, 150, 2);
+            }
+
+            lcd.unloadFont();
+
+            //
+
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+
+          break;
+          case MODE_PRESSURE:
+
+            value = ((pressure - 400) / 600.0f) * 360;
+            color = lcd.color565(33, 150, 243);
+
+            //
+
+            lcd.loadFont(AA_FONT_LARGE);
+
+            sprintf(buffer, "%.0f hPa", pressure);
+            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.drawCentreString(buffer, 120, 99, 6);
+
+            lcd.unloadFont();
+
+            //
+
+            lcd.loadFont(AA_FONT_SMALL);
+
+            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.drawCentreString(F("Pressure"), 120, 73, 2);
+
+            sprintf(buffer, "Alt. %.0f m", altitude);
+            lcd.setTextColor(color, TFT_BLACK, true);
+            lcd.drawCentreString(buffer, 120, 150, 2);
+
+            lcd.unloadFont();
+
+            //
+
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+
+          break;
         }
 
         update = false;
@@ -776,15 +909,27 @@ void loop() {
       //
     break;
   }
-  if ( is_clock && timer_clock.hasFinished() ) {
-    is_clock = false;
+  if ( timer_mode.hasFinished() ) {
+    switch (mode) {
+      case MODE_CLOCK:
+        mode = MODE_TEMP;
+      break;
+      case MODE_TEMP:
+        mode = MODE_HUMIDITY;
+      break;
+      case MODE_HUMIDITY:
+        mode = MODE_PRESSURE;
+      break;
+      case MODE_PRESSURE:
+        mode = MODE_CLOCK;
+      break;
+    }
+    timer_mode.restart();
+    Serial.println("Change");
     update = true;
   }
   if ( timer_read.hasFinished() ) {
     update_sensor_data();
     timer_read.restart();
-    timer_clock.restart();
-    is_clock = true;
-    update = true;
   }
 }
