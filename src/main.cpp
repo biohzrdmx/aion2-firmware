@@ -36,6 +36,9 @@
 #define AA_FONT_LARGE  NotoSansBold42
 #define AA_FONT_VECODE SansationRegular24
 
+#define TFT_DARKERGREY  0x31A6
+#define TFT_DARKESTGREY 0x18E3
+
 #define STATE_IDLE    0
 #define STATE_CONFIG  1
 #define STATE_SERVER  2
@@ -43,10 +46,13 @@
 #define STATE_CLIENT  4
 #define STATE_ERROR  99
 
+#define MODE_UNSET    99
 #define MODE_CLOCK    0
 #define MODE_TEMP     1
 #define MODE_HUMIDITY 2
 #define MODE_PRESSURE 3
+#define MODE_REBOOT   4
+#define MODE_RESET    5
 
 #define PIN_BTN_RESET D4
 
@@ -69,7 +75,7 @@ struct Config {
 Config config;
 
 int state = STATE_IDLE;
-int mode = MODE_CLOCK;
+int mode = MODE_UNSET;
 bool is_reset = false;
 bool update = true;
 
@@ -152,7 +158,7 @@ void setup() {
   lcd.unloadFont();
   lcd.setTextColor(lcd.color565(189, 189, 189), TFT_BLACK);
   lcd.loadFont(AA_FONT_SMALL);
-  lcd.drawCentreString(device_serial, 120, 150, 2);
+  lcd.drawCentreString(device_serial, 120, 128, 2);
   lcd.unloadFont();
   delay(2000);
   //
@@ -316,6 +322,7 @@ void setup_client() {
     update_sensor_data();
     timer_read.init(config.updateInterval);
     timer_mode.init(30000);
+    mode = MODE_CLOCK;
     update = true;
     //
     lcd.fillScreen(TFT_BLACK);
@@ -585,30 +592,72 @@ void clear_eeprom() {
 }
 
 void on_hold_reset() {
-  lcd.fillScreen(TFT_BLACK);
-  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-  lcd.loadFont(AA_FONT_SMALL);
-  lcd.drawCentreString(F("Factory reset..."), 120, 112, 2);
-  lcd.unloadFont();
-  //
-  is_reset = true;
-  Serial.println(F("Restarting into config mode..."));
-  clear_eeprom();
-  delay(100);
-  ESP.restart();
+  switch (mode) {
+    case MODE_REBOOT:
+      lcd.fillScreen(TFT_BLACK);
+      lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+      lcd.loadFont(AA_FONT_SMALL);
+      lcd.drawCentreString(F("Rebooting..."), 120, 112, 2);
+      lcd.unloadFont();
+      //
+      is_reset = true;
+      Serial.println(F("Rebooting..."));
+      delay(100);
+      ESP.restart();
+    break;
+    case MODE_UNSET:
+    case MODE_RESET:
+      lcd.fillScreen(TFT_BLACK);
+      lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+      lcd.loadFont(AA_FONT_SMALL);
+      lcd.drawCentreString(F("Factory reset..."), 120, 112, 2);
+      lcd.unloadFont();
+      //
+      is_reset = true;
+      Serial.println(F("Rebooting into config mode..."));
+      clear_eeprom();
+      delay(100);
+      ESP.restart();
+    break;
+  }
 }
 
 void on_pressed_reset() {
-  lcd.fillScreen(TFT_BLACK);
-  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-  lcd.loadFont(AA_FONT_SMALL);
-  lcd.drawCentreString(F("Restarting..."), 120, 112, 2);
-  lcd.unloadFont();
-  //
-  is_reset = true;
-  Serial.println(F("Restarting..."));
-  delay(100);
-  ESP.restart();
+  switch (mode) {
+    case MODE_UNSET:
+      lcd.fillScreen(TFT_BLACK);
+      lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+      lcd.loadFont(AA_FONT_SMALL);
+      lcd.drawCentreString(F("Rebooting..."), 120, 112, 2);
+      lcd.unloadFont();
+      //
+      is_reset = true;
+      Serial.println(F("Rebooting..."));
+      delay(100);
+      ESP.restart();
+    break;
+    case MODE_CLOCK:
+      mode = MODE_TEMP;
+    break;
+    case MODE_TEMP:
+      mode = MODE_HUMIDITY;
+    break;
+    case MODE_HUMIDITY:
+      mode = MODE_PRESSURE;
+    break;
+    case MODE_PRESSURE:
+      mode = MODE_REBOOT;
+    break;
+    case MODE_REBOOT:
+      mode = MODE_RESET;
+    break;
+    case MODE_RESET:
+      mode = MODE_CLOCK;
+    break;
+  }
+  timer_mode.restart();
+  Serial.println("Change");
+  update = true;
 }
 
 void update_sensor_data() {
@@ -617,7 +666,7 @@ void update_sensor_data() {
   //
   pressure = bmp.readPressure() / 100.0F;
   altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
-  temp = temp_evt.temperature;
+  temp = temp_evt.temperature - 2.5;
   humidity = humidity_evt.relative_humidity;
   heat_index = compute_heat_index(temp, humidity, false);
   //
@@ -647,11 +696,11 @@ void update_sensor_data() {
 
 float convert_cto_f(float c) {
   return c * 1.8 + 32;
-  }
+}
 
 float convert_fto_c(float f) {
   return (f - 32) * 0.55555;
-  }
+}
 
 float compute_heat_index(float temperature, float percentHumidity, bool isFahrenheit) {
   float hi;
@@ -684,7 +733,11 @@ float compute_heat_index(float temperature, float percentHumidity, bool isFahren
 }
 
 void loop() {
-  char buffer[9] = "";
+  char buffer[20] = "";
+  int hh, mm, ss;
+  float sdeg, mdeg, hdeg;
+  float sx, sy, hx, hy, mx, my;
+  float x0, x1, yy0, yy1;
   timeClient.update();
   button_reset.read();
   timer_read.update();
@@ -704,7 +757,31 @@ void loop() {
         switch (mode) {
           case MODE_CLOCK:
 
-            value = (timeClient.getHours() / 24.0f) * 360;
+            for(int i = 0; i < 360; i += 30) {
+              sx = cos((i - 90) * 0.0174532925);
+              sy = sin((i - 90) * 0.0174532925);
+              x0 = sx * 114 + 120;
+              yy0 = sy * 114 + 120;
+              x1 = sx * 100 + 120;
+              yy1 = sy * 100 + 120;
+
+              lcd.drawLine(x0, yy0, x1, yy1, TFT_DARKESTGREY);
+            }
+
+            hh = timeClient.getHours();
+            mm = timeClient.getMinutes();
+            ss = timeClient.getSeconds();
+
+            sdeg = ss * 6;                      // 0-59 -> 0-354
+            mdeg = mm * 6 + sdeg * 0.01666667;  // 0-59 -> 0-360 - includes seconds
+            hdeg = hh * 30 + mdeg * 0.0833333;  // 0-11 -> 0-360 - includes minutes and seconds
+            hx = cos((hdeg - 90) * 0.0174532925);    
+            hy = sin((hdeg - 90) * 0.0174532925);
+            mx = cos((mdeg - 90) * 0.0174532925);    
+            my = sin((mdeg - 90) * 0.0174532925);
+                  
+            lcd.drawWideLine(hx * 62 + 121, hy * 62 + 121, 121, 121, 5.0f, TFT_DARKERGREY, TFT_BLACK);
+            lcd.drawWideLine(mx * 84 + 121, my * 84 + 121, 121, 121, 3.0f, TFT_DARKERGREY, TFT_BLACK);
 
             //
 
@@ -715,62 +792,6 @@ void loop() {
             lcd.drawCentreString(buffer, 120, 102, 2);
 
             lcd.unloadFont();
-
-            //
-
-            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
-
-            // lcd.loadFont(AA_FONT_LARGE);
-
-            // sprintf(buffer, "%.1fº C", temp);
-            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-            // lcd.drawCentreString(buffer, 120, 60, 6);
-
-            // lcd.unloadFont();
-
-            // //
-
-            // lcd.loadFont(AA_FONT_SMALL);
-
-            // sprintf(buffer, "Feels like %.1fº C", heat_index);
-            // lcd.setTextColor(color, TFT_BLACK, true);
-            // lcd.drawCentreString(buffer, 120, 110, 2);
-
-            // sprintf(buffer, "%.0f hPa", pressure);
-            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-            // lcd.drawString(buffer, 40, 140, 2);
-
-            // sprintf(buffer, "Hum. %.0f%%", humidity);
-            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-            // lcd.drawRightString(buffer, 200, 140, 2);
-
-            // lcd.unloadFont();
-
-            // //
-
-            // lcd.loadFont(AA_FONT_MEDIUM);
-
-            // sprintf(buffer, "%02d:%02d", timeClient.getHours(), timeClient.getMinutes());
-            // lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
-            // lcd.drawCentreString(buffer, 120, 170, 4);
-
-            // lcd.unloadFont();
-
-            // //
-
-            // value = ((temp + 50.0f) / 100.0f) * 360;
-
-            // if (temp < 10) {
-            //   color = lcd.color565(72, 209, 204);
-            // } else if (temp < 25) {
-            //   color = lcd.color565(34, 139, 34);
-            // } else if (temp < 30) {
-            //   color = lcd.color565(218, 165, 32);
-            // } else {
-            //   color = lcd.color565(178, 34, 34);
-            // }
-
-            // lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
 
           break;
           case MODE_TEMP:
@@ -812,7 +833,8 @@ void loop() {
 
             //
 
-            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, TFT_DARKESTGREY, TFT_BLACK);
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_DARKESTGREY, true);
 
           break;
           case MODE_HUMIDITY:
@@ -859,7 +881,8 @@ void loop() {
 
             //
 
-            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, TFT_DARKESTGREY, TFT_BLACK);
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_DARKESTGREY, true);
 
           break;
           case MODE_PRESSURE:
@@ -892,7 +915,38 @@ void loop() {
 
             //
 
-            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_BLACK, true);
+            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, TFT_DARKESTGREY, TFT_BLACK);
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_DARKESTGREY, true);
+
+          break;
+          case MODE_REBOOT:
+          
+            lcd.loadFont(AA_FONT_MEDIUM);
+            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.drawCentreString(F("Reboot"), 120, 120, 6);
+            lcd.unloadFont();
+
+            //
+
+            lcd.loadFont(AA_FONT_SMALL);
+            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.drawCentreString(F("Hold button to reboot"), 120, 96, 2);
+            lcd.unloadFont();
+
+          break;
+          case MODE_RESET:
+          
+            lcd.loadFont(AA_FONT_MEDIUM);
+            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.drawCentreString(F("Reset"), 120, 120, 6);
+            lcd.unloadFont();
+
+            //
+
+            lcd.loadFont(AA_FONT_SMALL);
+            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.drawCentreString(F("Hold button to reset"), 120, 96, 2);
+            lcd.unloadFont();
 
           break;
         }
