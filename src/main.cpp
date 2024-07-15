@@ -39,6 +39,10 @@
 #define TFT_DARKERGREY  0x31A6
 #define TFT_DARKESTGREY 0x18E3
 
+#define TFT_NIGHTR_RED_LIGHT  0x8000
+#define TFT_NIGHTR_RED_DARK   0x5000
+#define TFT_NIGHTR_RED_DARKER 0x2000
+
 #define STATE_IDLE    0
 #define STATE_CONFIG  1
 #define STATE_SERVER  2
@@ -738,10 +742,12 @@ void loop() {
   float sdeg, mdeg, hdeg;
   float sx, sy, hx, hy, mx, my;
   float x0, x1, yy0, yy1;
+  bool is_night;
   timeClient.update();
   button_reset.read();
   timer_read.update();
   timer_mode.update();
+  is_night = timeClient.getHours() < 6 || timeClient.getHours() > 22;
   switch (state) {
     case STATE_SERVER:
       server.handleClient();
@@ -765,7 +771,7 @@ void loop() {
               x1 = sx * 100 + 120;
               yy1 = sy * 100 + 120;
 
-              lcd.drawLine(x0, yy0, x1, yy1, TFT_DARKESTGREY);
+              lcd.drawLine(x0, yy0, x1, yy1, is_night ? TFT_NIGHTR_RED_DARKER : TFT_DARKESTGREY);
             }
 
             hh = timeClient.getHours();
@@ -780,15 +786,15 @@ void loop() {
             mx = cos((mdeg - 90) * 0.0174532925);    
             my = sin((mdeg - 90) * 0.0174532925);
                   
-            lcd.drawWideLine(hx * 62 + 121, hy * 62 + 121, 121, 121, 5.0f, TFT_DARKERGREY, TFT_BLACK);
-            lcd.drawWideLine(mx * 84 + 121, my * 84 + 121, 121, 121, 3.0f, TFT_DARKERGREY, TFT_BLACK);
+            lcd.drawWideLine(hx * 62 + 121, hy * 62 + 121, 121, 121, 5.0f, is_night ? TFT_NIGHTR_RED_DARK : TFT_DARKERGREY, TFT_BLACK);
+            lcd.drawWideLine(mx * 84 + 121, my * 84 + 121, 121, 121, 3.0f, is_night ? TFT_NIGHTR_RED_DARK : TFT_DARKERGREY, TFT_BLACK);
 
             //
 
             lcd.loadFont(AA_FONT_LARGE);
 
             sprintf(buffer, "%02d:%02d", timeClient.getHours(), timeClient.getMinutes());
-            lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_LIGHT : TFT_WHITE, TFT_BLACK);
             lcd.drawCentreString(buffer, 120, 102, 2);
 
             lcd.unloadFont();
@@ -813,7 +819,7 @@ void loop() {
             lcd.loadFont(AA_FONT_LARGE);
 
             sprintf(buffer, "%.1fº C", temp);
-            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_LIGHT : TFT_WHITE, TFT_BLACK, true);
             lcd.drawCentreString(buffer, 120, 99, 6);
 
             lcd.unloadFont();
@@ -822,19 +828,19 @@ void loop() {
 
             lcd.loadFont(AA_FONT_SMALL);
 
-            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : TFT_DARKGREY, TFT_BLACK, true);
             lcd.drawCentreString(F("Temperature"), 120, 73, 2);
 
             sprintf(buffer, "Feels like %.0fº C", heat_index);
-            lcd.setTextColor(color, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : color, TFT_BLACK, true);
             lcd.drawCentreString(buffer, 120, 150, 2);
 
             lcd.unloadFont();
 
             //
 
-            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, TFT_DARKESTGREY, TFT_BLACK);
-            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_DARKESTGREY, true);
+            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, is_night ? TFT_NIGHTR_RED_DARKER : TFT_DARKESTGREY, TFT_BLACK);
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, is_night ? TFT_NIGHTR_RED_DARK : color, TFT_DARKESTGREY, true);
 
           break;
           case MODE_HUMIDITY:
@@ -856,7 +862,7 @@ void loop() {
             lcd.loadFont(AA_FONT_LARGE);
 
             sprintf(buffer, "%.0f%%", humidity);
-            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_LIGHT : TFT_WHITE, TFT_BLACK, true);
             lcd.drawCentreString(buffer, 120, 99, 6);
 
             lcd.unloadFont();
@@ -865,10 +871,10 @@ void loop() {
 
             lcd.loadFont(AA_FONT_SMALL);
 
-            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : TFT_DARKGREY, TFT_BLACK, true);
             lcd.drawCentreString(F("Humidty"), 120, 73, 2);
 
-            lcd.setTextColor(color, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : color, TFT_BLACK, true);
             if (humidity < 30) {
               lcd.drawCentreString("Dry", 120, 150, 2);
             } else if (humidity < 60) {
@@ -881,8 +887,8 @@ void loop() {
 
             //
 
-            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, TFT_DARKESTGREY, TFT_BLACK);
-            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_DARKESTGREY, true);
+            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, is_night ? TFT_NIGHTR_RED_DARKER : TFT_DARKESTGREY, TFT_BLACK);
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, is_night ? TFT_NIGHTR_RED_DARK : color, TFT_DARKESTGREY, true);
 
           break;
           case MODE_PRESSURE:
@@ -895,7 +901,7 @@ void loop() {
             lcd.loadFont(AA_FONT_LARGE);
 
             sprintf(buffer, "%.0f hPa", pressure);
-            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_LIGHT : TFT_WHITE, TFT_BLACK, true);
             lcd.drawCentreString(buffer, 120, 99, 6);
 
             lcd.unloadFont();
@@ -904,32 +910,32 @@ void loop() {
 
             lcd.loadFont(AA_FONT_SMALL);
 
-            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : TFT_DARKGREY, TFT_BLACK, true);
             lcd.drawCentreString(F("Pressure"), 120, 73, 2);
 
             sprintf(buffer, "Alt. %.0f m", altitude);
-            lcd.setTextColor(color, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : color, TFT_BLACK, true);
             lcd.drawCentreString(buffer, 120, 150, 2);
 
             lcd.unloadFont();
 
             //
 
-            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, TFT_DARKESTGREY, TFT_BLACK);
-            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, color, TFT_DARKESTGREY, true);
+            lcd.drawSmoothArc(120, 120, 115, 100, 0, 360, is_night ? TFT_NIGHTR_RED_DARKER : TFT_DARKESTGREY, TFT_BLACK);
+            lcd.drawSmoothArc(120, 120, 110, 105, 0, value, is_night ? TFT_NIGHTR_RED_DARK : color, TFT_DARKESTGREY, true);
 
           break;
           case MODE_REBOOT:
           
             lcd.loadFont(AA_FONT_MEDIUM);
-            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_LIGHT : TFT_WHITE, TFT_BLACK, true);
             lcd.drawCentreString(F("Reboot"), 120, 120, 6);
             lcd.unloadFont();
 
             //
 
             lcd.loadFont(AA_FONT_SMALL);
-            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : TFT_DARKGREY, TFT_BLACK, true);
             lcd.drawCentreString(F("Hold button to reboot"), 120, 96, 2);
             lcd.unloadFont();
 
@@ -937,14 +943,14 @@ void loop() {
           case MODE_RESET:
           
             lcd.loadFont(AA_FONT_MEDIUM);
-            lcd.setTextColor(TFT_WHITE, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_LIGHT : TFT_WHITE, TFT_BLACK, true);
             lcd.drawCentreString(F("Reset"), 120, 120, 6);
             lcd.unloadFont();
 
             //
 
             lcd.loadFont(AA_FONT_SMALL);
-            lcd.setTextColor(TFT_DARKGREY, TFT_BLACK, true);
+            lcd.setTextColor(is_night ? TFT_NIGHTR_RED_DARK : TFT_DARKGREY, TFT_BLACK, true);
             lcd.drawCentreString(F("Hold button to reset"), 120, 96, 2);
             lcd.unloadFont();
 
