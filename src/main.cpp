@@ -747,7 +747,7 @@ void loop() {
   button_reset.read();
   timer_read.update();
   timer_mode.update();
-  is_night = timeClient.getHours() < 6 || timeClient.getHours() > 22;
+  is_night = timeClient.getHours() <= 6 || timeClient.getHours() >= 22;
   switch (state) {
     case STATE_SERVER:
       server.handleClient();
